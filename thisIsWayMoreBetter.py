@@ -1,4 +1,4 @@
-# me  –  Script TOP DAT (full, standalone, your variable names)
+# me  –  Script TOP DAT
 import math, cv2, numpy as np
 
 # ========================參數=========================
@@ -62,30 +62,62 @@ def process_image_white_BG_2_black_BG(img: np.ndarray) -> np.ndarray:
 
 
 def group_and_draw_circles(img: np.ndarray, x_pct: float, y_pct: float, r: int) -> np.ndarray:
-    h, w  = img.shape[:2]
-    dx, dy = int(w*x_pct/100), int(h*y_pct/100)
+    """
+    1. 先建立 mask_full（與原本邏輯相同）； 
+    2. 用手動畫圓的方式，把 mask_full 中每一個 True 的點，
+       畫成半徑為 r 的實心圓到一張新的二值圖 dilated_manual；
+    3. 對 dilated_manual 用 connectedComponentsWithStats 找出每個填充後大圓區塊
+       的標籤、質心（centroids）等資訊；
+    4. 最後把質心位置再畫一次半徑為 r 的圓到輸出影像上。
+    """
+    h, w = img.shape[:2]
+    dx, dy = int(w * x_pct / 100), int(h * y_pct / 100)
+    # --- 1. 計算 mask_full 的方式與你原本相同 ---
     mask   = np.any(img != 255, axis=2)
     mask_crop = mask[dy:h-dy, dx:w-dx]
-    mask_full = np.zeros_like(mask); mask_full[dy:h-dy, dx:w-dx] = mask_crop
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
-    _, labels = cv2.connectedComponents(cv2.dilate(mask_full.astype(np.uint8), kernel))
+    mask_full = np.zeros_like(mask)
+    mask_full[dy:h-dy, dx:w-dx] = mask_crop
+
+    # --- 2. 手動「畫大圓」到一張新的二值圖上（取代 getStructuringElement + dilate） ---
+    # 建立一張全 0 的二值圖，大小同 mask_full
+    dilated_manual = np.zeros_like(mask_full, dtype=np.uint8)
+
+    # 把 mask_full 中任一 True 點，畫成半徑 r 的實心圓到 dilated_manual
+    ys_nonzero, xs_nonzero = np.nonzero(mask_full)
+    for (y0, x0) in zip(ys_nonzero, xs_nonzero):
+        # 在 dilated_manual 上畫一個「白色實心圓」，半徑 r
+        cv2.circle(dilated_manual, (x0, y0), r, 255, -1)
+
+    # --- 3. 用 connectedComponentsWithStats 找每個「大圓群」的質心与統計資訊 ---
+    # 這裡一定要先轉成 0/1 二值圖 (uint8)，connectedComponentsWithStats 會把 255 當成前景
+    # connectivity=8 可以讓對角線也算是連通
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(dilated_manual, connectivity=8)
+
+    # --- 4. 把質心位置再畫一次半徑為 r 的圓到輸出影像上 ---
+    # 先把原始影像轉成 BGR（如果原本是 RGB）
     out = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    for lab in range(1, labels.max()+1):
-        ys, xs = np.where((labels == lab) & mask_full)
-        if xs.size:
-            fill_config = 2 # default circle edge px
-            if human_circle_fill:
-                fill_config = -1
-            else:
-                fill_config = 2
-            cv2.circle(out, (int(xs.mean()), int(ys.mean())), r, _get_color_bgr('black'),fill_config)#(0, 0, 255), 2)
-            # ^^^^^^^^^^^^^^^^^^ 這是五月底才調整的，原本不是黑色，我後來調成黑色
-    #return out
-    out_and_flip=flip_image_both_axes(out)
+
+    # 從 1 開始到 num_labels-1（跳過背景 label=0）
+    for lab in range(1, num_labels):
+        # centroids[lab] 會是一個 (x_center, y_center) 的浮點數座標
+        cx, cy = centroids[lab]
+        # 確保型別轉成整數
+        cx_int, cy_int = int(round(cx)), int(round(cy))
+
+        # 根據 prams 設定決定填滿或只畫邊框
+        if human_circle_fill:
+            fill_config = -1   # -1 代表實心
+        else:
+            fill_config = 2    # 2 代表線寬 2 px
+
+        # 最後在 out 上畫半徑 r 的圓
+        cv2.circle(out, (cx_int, cy_int), r, _get_color_bgr('black'), fill_config)
+
+    # 最後再翻轉、以及做黑白反轉處理
+    out_and_flip = flip_image_both_axes(out)
     if prams_visual_debug:
         return out_and_flip
     else:
-        #return out_and_flip 
         return process_image_white_BG_2_black_BG(out_and_flip)
 
 #def _draw_frame_on_ax(ax, radii_frame, angles_frame, sensor_trans, colors_sensor):
