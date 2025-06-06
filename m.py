@@ -61,30 +61,99 @@ def process_image_white_BG_2_black_BG(img: np.ndarray) -> np.ndarray:
 
 
 
+# def group_and_draw_circles(img: np.ndarray, x_pct: float, y_pct: float, r: int) -> np.ndarray:
+#     h, w  = img.shape[:2]
+#     dx, dy = int(w*x_pct/100), int(h*y_pct/100)
+#     mask   = np.any(img != 255, axis=2)
+#     mask_crop = mask[dy:h-dy, dx:w-dx]
+#     mask_full = np.zeros_like(mask); mask_full[dy:h-dy, dx:w-dx] = mask_crop
+#     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
+#     _, labels = cv2.connectedComponents(cv2.dilate(mask_full.astype(np.uint8), kernel))
+#     out = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+#     for lab in range(1, labels.max()+1):
+#         ys, xs = np.where((labels == lab) & mask_full)
+#         if xs.size:
+#             fill_config = 2 # default circle edge px
+#             if human_circle_fill:
+#                 fill_config = -1
+#             else:
+#                 fill_config = 2
+#             cv2.circle(out, (int(xs.mean()), int(ys.mean())), r, _get_color_bgr('black'),fill_config)#(0, 0, 255), 2)
+#     #return out
+#     out_and_flip=flip_image_both_axes(out)
+#     if prams_visual_debug:
+#         return out_and_flip
+#     else: 
+#         return process_image_white_BG_2_black_BG(out_and_flip)
+
 def group_and_draw_circles(img: np.ndarray, x_pct: float, y_pct: float, r: int) -> np.ndarray:
-    h, w  = img.shape[:2]
-    dx, dy = int(w*x_pct/100), int(h*y_pct/100)
-    mask   = np.any(img != 255, axis=2)
-    mask_crop = mask[dy:h-dy, dx:w-dx]
-    mask_full = np.zeros_like(mask); mask_full[dy:h-dy, dx:w-dx] = mask_crop
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
-    _, labels = cv2.connectedComponents(cv2.dilate(mask_full.astype(np.uint8), kernel))
+    h, w = img.shape[:2]
+    dx, dy = int(w * x_pct / 100), int(h * y_pct / 100)
+    mask = np.any(img != 255, axis=2)
+    mask_crop = mask[dy : h - dy, dx : w - dx]
+    mask_full = np.zeros_like(mask)
+    mask_full[dy : h - dy, dx : w - dx] = mask_crop
+
+    # ================================================================
+    # 在這裡將 mask_full 的解析度先降到目標高度 480
+    # ================================================================
+    orig_h, orig_w = mask_full.shape  # 原始大小
+    target_h = 480
+    # 計算等比例縮放後的寬度
+    scale = target_h / orig_h
+    target_w = int(orig_w * scale)
+
+    # 1) 從 bool -> uint8，再 resize（使用最近鄰最好保留二值）
+    mask_small = cv2.resize(
+        mask_full.astype(np.uint8),
+        (target_w, target_h),
+        interpolation=cv2.INTER_NEAREST,
+    )
+
+    # 2) radius r 也要隨尺度縮放
+    #    不可小於 1，否則 cv2.getStructuringElement 會當掉
+    r_small = max(1, int(round(r * scale)))
+
+    # 3) 用縮小後的 mask_small 計算 connectedComponents
+    kernel_small = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2 * r_small + 1, 2 * r_small + 1)
+    )
+    labels_small = cv2.connectedComponents(cv2.dilate(mask_small, kernel_small))[1]
+
+    # ================================================================
+    # 把 labels_small 放大回原始大小，方便後續找中心點
+    # ================================================================
+    # 先把 dtype 轉成 float32，再 resize 回原大小，用 最近鄰插值
+    labels_up = cv2.resize(
+        labels_small.astype(np.float32),
+        (orig_w, orig_h),
+        interpolation=cv2.INTER_NEAREST,
+    ).astype(np.int32)
+
+    # 接下來就把 labels_up 當作原本的 labels 來用
+    labels = labels_up
+
+    # ───────────────────────────────────────────────────────────────
+    # 以下為原先用 labels 來畫圈的流程
     out = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    for lab in range(1, labels.max()+1):
+    for lab in range(1, labels.max() + 1):
         ys, xs = np.where((labels == lab) & mask_full)
         if xs.size:
-            fill_config = 2 # default circle edge px
-            if human_circle_fill:
-                fill_config = -1
-            else:
-                fill_config = 2
-            cv2.circle(out, (int(xs.mean()), int(ys.mean())), r, _get_color_bgr('black'),fill_config)#(0, 0, 255), 2)
-    #return out
-    out_and_flip=flip_image_both_axes(out)
+            fill_config = -1 if human_circle_fill else 2
+            # 注意：此處用的座標、半徑都是原始解析度的單位
+            cv2.circle(
+                out,
+                (int(xs.mean()), int(ys.mean())),
+                r,
+                _get_color_bgr("black"),
+                fill_config,
+            )
+    out_and_flip = flip_image_both_axes(out)
     if prams_visual_debug:
         return out_and_flip
-    else: 
+    else:
         return process_image_white_BG_2_black_BG(out_and_flip)
+
 
 #def _draw_frame_on_ax(ax, radii_frame, angles_frame, sensor_trans, colors_sensor):
 def _process_sensor_data(radii_frame, angles_frame, sensor_trans):
