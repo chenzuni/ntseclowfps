@@ -43,7 +43,7 @@ for config in "${CONFIG_FLAGS[@]}"; do
   cd build
 
   # 執行 CMake 設定
-  cmake .. -DCMAKE_CXX_STANDARD=14 -DPBRT_USE_PREGENERATED_RGB_TO_SPECTRUM_TABLES=True $config
+  cmake .. -DCMAKE_CXX_STANDARD=14 $config
 
   # 編譯專案
   cmake --build . --parallel --config Release
